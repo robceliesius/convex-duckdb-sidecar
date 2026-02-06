@@ -17,8 +17,12 @@ Each request gets a fresh `:memory:` DuckDB instance — no state leaks between 
 
 ```bash
 docker build -t duckdb-sidecar .
-docker run -p 3214:3214 duckdb-sidecar
+docker run --rm -p 3214:3214 duckdb-sidecar
 ```
+
+Notes:
+- DuckDB uses native bindings. Alpine-based images frequently fail to load DuckDB (`ERR_DLOPEN_FAILED` / missing `ld-linux-*`), so this sidecar uses a glibc-based base image (`node:22-bookworm-slim`).
+- The sidecar is stateless. You can scale it horizontally.
 
 ### Standalone
 
@@ -32,6 +36,24 @@ PORT=3214 node dist/server.js
 
 ```bash
 npm run dev
+```
+
+## Example .env (for local dev scripts)
+
+The sidecar only reads `PORT` from environment variables. S3/MinIO config is passed per-request in `s3_config`.
+
+That said, having a `.env` is convenient for curl scripts and local tooling:
+
+```bash
+# .env
+PORT=3214
+
+# Used by your shell scripts/curl examples (not read automatically by the sidecar).
+S3_ENDPOINT_URL=http://localhost:9000
+ANALYTICS_S3_BUCKET=analytics-parquet
+AWS_REGION=us-east-1
+AWS_ACCESS_KEY_ID=minioadmin
+AWS_SECRET_ACCESS_KEY=minioadmin
 ```
 
 ## Endpoints
@@ -60,6 +82,39 @@ npm run dev
 }
 ```
 
+Curl example (using `.env` from above):
+
+```bash
+set -a
+source .env
+set +a
+
+ts="$(date +%s%3N)"
+key="smoke/${ts}.parquet"
+
+curl -sS -X POST "http://localhost:${PORT}/snapshot" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"table_name\": \"orders\",
+    \"data\": [{\"id\":\"a\",\"total\":99.99}],
+    \"columns\": [
+      {\"source\":\"id\",\"target\":\"id\",\"type\":\"VARCHAR\"},
+      {\"source\":\"total\",\"target\":\"total\",\"type\":\"DOUBLE\"}
+    ],
+    \"s3_key\": \"${key}\",
+    \"s3_config\": {
+      \"endpoint\": \"${S3_ENDPOINT_URL}\",
+      \"bucket\": \"${ANALYTICS_S3_BUCKET}\",
+      \"region\": \"${AWS_REGION}\",
+      \"accessKeyId\": \"${AWS_ACCESS_KEY_ID}\",
+      \"secretAccessKey\": \"${AWS_SECRET_ACCESS_KEY}\",
+      \"forcePathStyle\": true
+    }
+  }"
+echo
+echo "wrote s3://${ANALYTICS_S3_BUCKET}/${key}"
+```
+
 ### `POST /query`
 
 ```json
@@ -74,6 +129,32 @@ npm run dev
     "forcePathStyle": true
   }
 }
+```
+
+Curl example (query a single Parquet object):
+
+```bash
+set -a
+source .env
+set +a
+
+key="smoke/1706140800000.parquet"
+
+curl -sS -X POST "http://localhost:${PORT}/query" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"sql\": \"SELECT COUNT(*)::BIGINT AS c FROM orders\",
+    \"tables\": [{\"name\":\"orders\",\"s3_path\":\"${key}\"}],
+    \"s3_config\": {
+      \"endpoint\": \"${S3_ENDPOINT_URL}\",
+      \"bucket\": \"${ANALYTICS_S3_BUCKET}\",
+      \"region\": \"${AWS_REGION}\",
+      \"accessKeyId\": \"${AWS_ACCESS_KEY_ID}\",
+      \"secretAccessKey\": \"${AWS_SECRET_ACCESS_KEY}\",
+      \"forcePathStyle\": true
+    }
+  }"
+echo
 ```
 
 ## Configuration
@@ -118,8 +199,8 @@ Convex App  ──HTTP──▶  Sidecar  ──S3 API──▶  MinIO / S3
 - **Express 5** HTTP server with 50MB request body limit
 - **duckdb-async** for query execution
 - **@aws-sdk/client-s3** for object storage
-- **Node.js 22+** required (Alpine Docker image)
-- Multi-stage Docker build (~120MB image)
+- **Node.js 22+** required
+- Multi-stage Docker build
 
 ## Related
 
