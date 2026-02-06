@@ -1,0 +1,21 @@
+{
+  "name": "duckdb-sidecar",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "tsc --watch & node --watch dist/server.js"
+  },
+  "dependencies": {
+    "duckdb-async": "^1.4.2",
+    "@aws-sdk/client-s3": "^3.984.0",
+    "express": "^5.1.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.19.3",
+    "typescript": "^5.7.2"
+  }
+}
