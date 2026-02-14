@@ -1,3 +1,4 @@
+import "./otel.js";
 import express from "express";
 import type { NextFunction, Request, Response } from "express";
 import { handleSnapshot } from "./handlers/snapshot.js";

@@ -9,7 +9,13 @@
     "dev": "tsc --watch & node --watch dist/server.js"
   },
   "dependencies": {
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/auto-instrumentations-node": "^0.69.0",
     "duckdb-async": "^1.4.2",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.212.0",
+    "@opentelemetry/resources": "^2.5.1",
+    "@opentelemetry/sdk-node": "^0.212.0",
+    "@opentelemetry/semantic-conventions": "^1.39.0",
     "@aws-sdk/client-s3": "^3.984.0",
     "express": "^5.1.0"
   },
