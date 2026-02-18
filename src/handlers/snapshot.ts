@@ -4,6 +4,7 @@ import { createS3Client, uploadToS3 } from "../lib/s3.js";
 import fs from "fs/promises";
 import path from "path";
 import os from "os";
+import { randomUUID } from "crypto";
 import {
   normalizeDuckDbType,
   sqlIdentifier,
@@ -106,7 +107,11 @@ export async function handleSnapshot(req: Request, res: Response) {
     }
 
     // Export to Parquet
-    tmpPath = path.join(os.tmpdir(), `duckdb_snap_${Date.now()}.parquet`);
+    // Include process + UUID to avoid collisions across concurrent requests.
+    tmpPath = path.join(
+      os.tmpdir(),
+      `duckdb_snap_${Date.now()}_${process.pid}_${randomUUID()}.parquet`,
+    );
     await db.run(
       `COPY export_data TO ${sqlStringLiteral(tmpPath)} (FORMAT PARQUET, COMPRESSION ZSTD);`,
     );
