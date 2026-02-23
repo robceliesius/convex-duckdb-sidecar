@@ -3,6 +3,7 @@ import express from "express";
 import type { NextFunction, Request, Response } from "express";
 import { handleSnapshot } from "./handlers/snapshot.js";
 import { handleQuery } from "./handlers/query.js";
+import { initPool, drainPool, getPoolStats } from "./lib/pool.js";
 
 const app = express();
 const PORT = Number.parseInt(process.env.PORT ?? "3214", 10);
@@ -29,9 +30,40 @@ app.get("/health", (_req, res) => {
   res.json({ status: "ok", service: "duckdb-sidecar" });
 });
 
+app.get("/pool-stats", (_req, res) => {
+  const stats = getPoolStats();
+  if (!stats) {
+    res.json({ enabled: false });
+    return;
+  }
+  res.json({ enabled: true, ...stats });
+});
+
 app.post("/snapshot", handleSnapshot);
 app.post("/query", handleQuery);
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`[duckdb-sidecar] Listening on port ${PORT}`);
+async function start() {
+  const poolEnabled = await initPool();
+  console.log(
+    `[duckdb-sidecar] Pool: ${poolEnabled ? "enabled" : "disabled (per-request instances)"}`,
+  );
+
+  const server = app.listen(PORT, "0.0.0.0", () => {
+    console.log(`[duckdb-sidecar] Listening on port ${PORT}`);
+  });
+
+  // Graceful shutdown: drain pool on SIGTERM
+  const shutdown = async () => {
+    console.log("[duckdb-sidecar] Shutting down...");
+    server.close();
+    await drainPool();
+    process.exit(0);
+  };
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
+}
+
+start().catch((err) => {
+  console.error("[duckdb-sidecar] Failed to start:", err);
+  process.exit(1);
 });

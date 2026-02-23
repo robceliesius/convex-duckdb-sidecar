@@ -6,6 +6,7 @@ import {
   runWithQueryQueue,
   SidecarQueueSaturatedError,
 } from "../lib/query_queue.js";
+import { getPool } from "../lib/pool.js";
 import { sqlIdentifier, sqlStringLiteral, toJsonValue } from "../lib/sql.js";
 import {
   assertArray,
@@ -52,37 +53,64 @@ export async function handleQuery(req: Request, res: Response) {
   }
 
   let db: Database | null = null;
+  const pool = getPool();
 
   try {
     const { value: payload, queueWaitMs, queueDepthOnEnqueue } = await runWithQueryQueue(
       async () => {
-        db = await createDuckDB(s3Config);
+        let healthy = true;
+        const usePool = pool !== null;
 
-        // Create views for each table pointing to S3 Parquet files
-        for (const table of tables) {
-          const s3Path = table.s3_path.replace(/^\/+/, "");
-          const s3Uri = `s3://${s3Config.bucket}/${s3Path}`;
-          await db.run(
-            `CREATE OR REPLACE VIEW ${sqlIdentifier(table.name)} AS SELECT * FROM read_parquet(${sqlStringLiteral(s3Uri)});`,
-          );
+        if (usePool) {
+          db = await pool.acquire();
+        } else {
+          db = await createDuckDB(s3Config);
         }
 
-        // Execute SQL
-        const result = await db.all(sql);
-        await db.close();
-        db = null;
-
-        const columns = result.length > 0 ? Object.keys(result[0] as object) : [];
-        const rows = result.map((row) => {
-          const obj: Record<string, unknown> = {};
-          for (const col of columns) {
-            const val = (row as Record<string, unknown>)[col];
-            obj[col] = toJsonValue(val);
+        try {
+          // Create views for each table pointing to S3 Parquet files
+          for (const table of tables) {
+            const s3Path = table.s3_path.replace(/^\/+/, "");
+            const s3Uri = `s3://${s3Config.bucket}/${s3Path}`;
+            await db.run(
+              `CREATE OR REPLACE VIEW ${sqlIdentifier(table.name)} AS SELECT * FROM read_parquet(${sqlStringLiteral(s3Uri)});`,
+            );
           }
-          return obj;
-        });
 
-        return { columns, rows, row_count: rows.length };
+          // Execute SQL
+          const result = await db.all(sql);
+
+          const columns = result.length > 0 ? Object.keys(result[0] as object) : [];
+          const rows = result.map((row) => {
+            const obj: Record<string, unknown> = {};
+            for (const col of columns) {
+              const val = (row as Record<string, unknown>)[col];
+              obj[col] = toJsonValue(val);
+            }
+            return obj;
+          });
+
+          return { columns, rows, row_count: rows.length };
+        } catch (error) {
+          healthy = false;
+          throw error;
+        } finally {
+          if (usePool) {
+            // Drop views before releasing back to pool
+            if (healthy) {
+              for (const table of tables) {
+                await db!.run(
+                  `DROP VIEW IF EXISTS ${sqlIdentifier(table.name)};`,
+                ).catch(() => {});
+              }
+            }
+            pool.release(db!, healthy);
+            db = null;
+          } else {
+            await db!.close();
+            db = null;
+          }
+        }
       },
     );
 
@@ -99,6 +127,7 @@ export async function handleQuery(req: Request, res: Response) {
         row_count: payload.row_count,
         queue_running: queueStats.running,
         queue_queued: queueStats.queued,
+        pooled: pool !== null,
       }),
     );
 

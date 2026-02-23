@@ -79,3 +79,20 @@ export async function createDuckDB(s3Config: S3Config): Promise<Database> {
 
   return db;
 }
+
+export function getS3ConfigFromEnv(): S3Config {
+  const endpoint = process.env.S3_ENDPOINT;
+  const bucket = process.env.S3_BUCKET;
+  const accessKeyId = process.env.S3_ACCESS_KEY_ID;
+  const secretAccessKey = process.env.S3_SECRET_ACCESS_KEY;
+  if (!endpoint || !bucket || !accessKeyId || !secretAccessKey) {
+    throw new Error(
+      "Missing S3 pool env vars: S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY",
+    );
+  }
+  return { endpoint, bucket, accessKeyId, secretAccessKey, forcePathStyle: true };
+}
+
+export async function createPooledDuckDB(): Promise<Database> {
+  return createDuckDB(getS3ConfigFromEnv());
+}
