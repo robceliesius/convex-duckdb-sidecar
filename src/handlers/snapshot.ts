@@ -112,8 +112,20 @@ export async function handleSnapshot(req: Request, res: Response) {
       os.tmpdir(),
       `duckdb_snap_${Date.now()}_${process.pid}_${randomUUID()}.parquet`,
     );
+
+    // Sort by date column so Parquet row groups have tight, non-overlapping
+    // ranges — enables DuckDB predicate pushdown to skip irrelevant groups.
+    const sortCol = columns.find((c) => c.target === "created_at")
+      ? "created_at"
+      : columns.find((c) => c.target === "started_at")
+        ? "started_at"
+        : null;
+    const sourceExpr = sortCol
+      ? `(SELECT * FROM export_data ORDER BY ${sortCol})`
+      : "export_data";
+
     await db.run(
-      `COPY export_data TO ${sqlStringLiteral(tmpPath)} (FORMAT PARQUET, COMPRESSION ZSTD);`,
+      `COPY ${sourceExpr} TO ${sqlStringLiteral(tmpPath)} (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE 50000);`,
     );
     await db.close();
     db = null;
