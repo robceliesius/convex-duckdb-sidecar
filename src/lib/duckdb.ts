@@ -81,13 +81,14 @@ export async function createDuckDB(s3Config: S3Config): Promise<Database> {
 }
 
 export function getS3ConfigFromEnv(): S3Config {
-  const endpoint = process.env.S3_ENDPOINT;
-  const bucket = process.env.S3_BUCKET;
-  const accessKeyId = process.env.S3_ACCESS_KEY_ID;
-  const secretAccessKey = process.env.S3_SECRET_ACCESS_KEY;
+  // Support both pool-specific names and existing sidecar env var names
+  const endpoint = process.env.S3_ENDPOINT ?? process.env.S3_ENDPOINT_URL;
+  const bucket = process.env.S3_BUCKET ?? process.env.ANALYTICS_S3_BUCKET;
+  const accessKeyId = process.env.S3_ACCESS_KEY_ID ?? process.env.AWS_ACCESS_KEY_ID;
+  const secretAccessKey = process.env.S3_SECRET_ACCESS_KEY ?? process.env.AWS_SECRET_ACCESS_KEY;
   if (!endpoint || !bucket || !accessKeyId || !secretAccessKey) {
     throw new Error(
-      "Missing S3 pool env vars: S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY",
+      "Missing S3 pool env vars. Set S3_ENDPOINT (or S3_ENDPOINT_URL), S3_BUCKET (or ANALYTICS_S3_BUCKET), S3_ACCESS_KEY_ID (or AWS_ACCESS_KEY_ID), S3_SECRET_ACCESS_KEY (or AWS_SECRET_ACCESS_KEY)",
     );
   }
   return { endpoint, bucket, accessKeyId, secretAccessKey, forcePathStyle: true };
