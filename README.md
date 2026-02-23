@@ -52,6 +52,8 @@ DUCKDB_MEMORY_LIMIT=6GB
 DUCKDB_ENABLE_OBJECT_CACHE=true
 SIDECAR_MAX_CONCURRENT_QUERIES=12
 SIDECAR_MAX_QUERY_QUEUE=200
+SIDECAR_MAX_CONCURRENT_SNAPSHOTS=4
+SIDECAR_MAX_SNAPSHOT_QUEUE=100
 
 # Used by your shell scripts/curl examples (not read automatically by the sidecar).
 S3_ENDPOINT_URL=http://localhost:9000
@@ -172,6 +174,8 @@ echo
 | `DUCKDB_ENABLE_OBJECT_CACHE` | `true` | DuckDB object cache (`SET enable_object_cache`) |
 | `SIDECAR_MAX_CONCURRENT_QUERIES` | `12` | Max concurrent `/query` executions |
 | `SIDECAR_MAX_QUERY_QUEUE` | `200` | Max queued `/query` requests before returning `503` |
+| `SIDECAR_MAX_CONCURRENT_SNAPSHOTS` | `4` | Max concurrent `/snapshot` executions |
+| `SIDECAR_MAX_SNAPSHOT_QUEUE` | `100` | Max queued `/snapshot` requests before returning `503` |
 
 S3 credentials are passed per-request in the `s3_config` body field (not via environment variables), so a single sidecar instance can serve multiple tenants/buckets.
 
@@ -186,6 +190,8 @@ DUCKDB_MEMORY_LIMIT=6GB
 DUCKDB_ENABLE_OBJECT_CACHE=true
 SIDECAR_MAX_CONCURRENT_QUERIES=12
 SIDECAR_MAX_QUERY_QUEUE=200
+SIDECAR_MAX_CONCURRENT_SNAPSHOTS=4
+SIDECAR_MAX_SNAPSHOT_QUEUE=100
 ```
 
 ## Docker Compose Example

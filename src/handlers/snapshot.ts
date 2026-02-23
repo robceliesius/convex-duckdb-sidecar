@@ -6,6 +6,11 @@ import path from "path";
 import os from "os";
 import { randomUUID } from "crypto";
 import {
+  getSnapshotQueueStats,
+  runWithSnapshotQueue,
+  SidecarSnapshotQueueSaturatedError,
+} from "../lib/snapshot_queue.js";
+import {
   normalizeDuckDbType,
   sqlIdentifier,
   sqlStringLiteral,
@@ -36,6 +41,7 @@ const BATCH_SIZE = 1000;
 export async function handleSnapshot(req: Request, res: Response) {
   const DEBUG = process.env.LOG_LEVEL === "debug";
 
+  let tableName: string;
   let s3Key: string;
   let s3Config: ReturnType<typeof parseS3Config>;
   let data: Record<string, unknown>[];
@@ -44,7 +50,7 @@ export async function handleSnapshot(req: Request, res: Response) {
     const body = assertRecord(req.body, "body") as unknown as SnapshotRequest;
 
     // Validate required fields early for clearer 400s.
-    assertNonEmptyString(body.table_name, "table_name");
+    tableName = assertNonEmptyString(body.table_name, "table_name");
     s3Key = assertNonEmptyString(body.s3_key, "s3_key");
     s3Config = parseS3Config(body.s3_config);
 
@@ -74,89 +80,117 @@ export async function handleSnapshot(req: Request, res: Response) {
     return;
   }
 
-  let db: Database | null = null;
-  let tmpPath: string | null = null;
-
   try {
-    db = await Database.create(":memory:");
+    const { value: snapshotResult, queueWaitMs, queueDepthOnEnqueue } = await runWithSnapshotQueue(
+      async () => {
+        let db: Database | null = null;
+        let tmpPath: string | null = null;
+        try {
+          db = await Database.create(":memory:");
 
-    // Create table
-    const colDefs = columns
-      .map((c) => `${sqlIdentifier(c.target)} ${c.type}`)
-      .join(", ");
-    await db.run(`CREATE TABLE export_data (${colDefs});`);
+          const colDefs = columns
+            .map((c) => `${sqlIdentifier(c.target)} ${c.type}`)
+            .join(", ");
+          await db.run(`CREATE TABLE export_data (${colDefs});`);
 
-    // Batch insert
-    if (data.length > 0) {
-      const placeholders = columns.map(() => "?").join(", ");
-      const stmt = await db.prepare(`INSERT INTO export_data VALUES (${placeholders})`);
-      try {
-        for (let i = 0; i < data.length; i += BATCH_SIZE) {
-          const batch = data.slice(i, i + BATCH_SIZE);
-          for (const row of batch) {
-            const values = columns.map((col) => {
-              const val = row[col.source];
-              return val === undefined ? null : val;
-            });
-            await stmt.run(...values);
+          if (data.length > 0) {
+            const placeholders = columns.map(() => "?").join(", ");
+            const stmt = await db.prepare(`INSERT INTO export_data VALUES (${placeholders})`);
+            try {
+              for (let i = 0; i < data.length; i += BATCH_SIZE) {
+                const batch = data.slice(i, i + BATCH_SIZE);
+                for (const row of batch) {
+                  const values = columns.map((col) => {
+                    const val = row[col.source];
+                    return val === undefined ? null : val;
+                  });
+                  await stmt.run(...values);
+                }
+              }
+            } finally {
+              await stmt.finalize().catch(() => {});
+            }
           }
+          tmpPath = path.join(
+            os.tmpdir(),
+            `duckdb_snap_${Date.now()}_${process.pid}_${randomUUID()}.parquet`,
+          );
+
+          const sortCol = columns.find((c) => c.target === "created_at")
+            ? "created_at"
+            : columns.find((c) => c.target === "started_at")
+              ? "started_at"
+              : null;
+          const sourceExpr = sortCol
+            ? `(SELECT * FROM export_data ORDER BY ${sortCol})`
+            : "export_data";
+
+          await db.run(
+            `COPY ${sourceExpr} TO ${sqlStringLiteral(tmpPath)} (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE 50000);`,
+          );
+          await db.close();
+          db = null;
+
+          const buffer = await fs.readFile(tmpPath);
+          const s3 = createS3Client(s3Config);
+          if (DEBUG) {
+            console.log(
+              `[snapshot] Uploading s3://${s3Config.bucket}/${s3Key} via ${s3Config.endpoint}`,
+            );
+          }
+          await uploadToS3(s3, s3Config.bucket, s3Key, buffer);
+          if (DEBUG) {
+            console.log(
+              `[snapshot] Uploaded s3://${s3Config.bucket}/${s3Key} (${buffer.length} bytes)`,
+            );
+          }
+
+          return {
+            rowCount: data.length,
+            parquetSizeBytes: buffer.length,
+          };
+        } finally {
+          if (db) await db.close().catch(() => {});
+          if (tmpPath) await fs.unlink(tmpPath).catch(() => {});
         }
-      } finally {
-        await stmt.finalize().catch(() => {});
-      }
-    }
-
-    // Export to Parquet
-    // Include process + UUID to avoid collisions across concurrent requests.
-    tmpPath = path.join(
-      os.tmpdir(),
-      `duckdb_snap_${Date.now()}_${process.pid}_${randomUUID()}.parquet`,
+      },
     );
 
-    // Sort by date column so Parquet row groups have tight, non-overlapping
-    // ranges — enables DuckDB predicate pushdown to skip irrelevant groups.
-    const sortCol = columns.find((c) => c.target === "created_at")
-      ? "created_at"
-      : columns.find((c) => c.target === "started_at")
-        ? "started_at"
-        : null;
-    const sourceExpr = sortCol
-      ? `(SELECT * FROM export_data ORDER BY ${sortCol})`
-      : "export_data";
-
-    await db.run(
-      `COPY ${sourceExpr} TO ${sqlStringLiteral(tmpPath)} (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE 50000);`,
-    );
-    await db.close();
-    db = null;
-
-    // Upload to S3
-    const buffer = await fs.readFile(tmpPath);
-    const s3 = createS3Client(s3Config);
-    if (DEBUG) {
+    const queueStats = getSnapshotQueueStats();
+    if (DEBUG || queueWaitMs > 0) {
       console.log(
-        `[snapshot] Uploading s3://${s3Config.bucket}/${s3Key} via ${s3Config.endpoint}`,
-      );
-    }
-    await uploadToS3(s3, s3Config.bucket, s3Key, buffer);
-    if (DEBUG) {
-      console.log(
-        `[snapshot] Uploaded s3://${s3Config.bucket}/${s3Key} (${buffer.length} bytes)`,
+        JSON.stringify({
+          event: "snapshot_completed",
+          table_name: tableName,
+          row_count: snapshotResult.rowCount,
+          queue_wait_ms: queueWaitMs,
+          queue_depth_on_enqueue: queueDepthOnEnqueue,
+          queue_running: queueStats.running,
+          queue_queued: queueStats.queued,
+        }),
       );
     }
 
     res.json({
       s3_key: s3Key,
-      row_count: data.length,
-      parquet_size_bytes: buffer.length,
+      row_count: snapshotResult.rowCount,
+      parquet_size_bytes: snapshotResult.parquetSizeBytes,
     });
   } catch (error) {
+    if (error instanceof SidecarSnapshotQueueSaturatedError) {
+      const queueStats = getSnapshotQueueStats();
+      res.status(error.statusCode).json({
+        error: error.message,
+        status: "busy",
+        queue_running: queueStats.running,
+        queue_queued: queueStats.queued,
+      });
+      return;
+    }
+
     console.error("[snapshot] Error:", error);
     res.status(500).json({
       error: error instanceof Error ? error.message : String(error),
     });
-  } finally {
-    if (db) await db.close().catch(() => {});
-    if (tmpPath) await fs.unlink(tmpPath).catch(() => {});
   }
 }

@@ -4,6 +4,7 @@ import type { NextFunction, Request, Response } from "express";
 import { handleSnapshot } from "./handlers/snapshot.js";
 import { handleQuery } from "./handlers/query.js";
 import { initPool, drainPool, getPoolStats } from "./lib/pool.js";
+import { getSnapshotQueueStats } from "./lib/snapshot_queue.js";
 
 const app = express();
 const PORT = Number.parseInt(process.env.PORT ?? "3214", 10);
@@ -37,6 +38,10 @@ app.get("/pool-stats", (_req, res) => {
     return;
   }
   res.json({ enabled: true, ...stats });
+});
+
+app.get("/snapshot-queue-stats", (_req, res) => {
+  res.json(getSnapshotQueueStats());
 });
 
 app.post("/snapshot", handleSnapshot);
