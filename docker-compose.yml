@@ -6,6 +6,11 @@ services:
     environment:
       - PORT=3214
       - NODE_OPTIONS=--max-old-space-size=4096
+      - NODE_EXTRA_CA_CERTS=${NODE_EXTRA_CA_CERTS:-/etc/ssl/certs/minio-ca-bundle.pem}
+      - SSL_CERT_FILE=${SSL_CERT_FILE:-/etc/ssl/certs/minio-ca-bundle.pem}
+      - AWS_CA_BUNDLE=${AWS_CA_BUNDLE:-/etc/ssl/certs/minio-ca-bundle.pem}
+    volumes:
+      - ${INTERNAL_CA_BUNDLE_HOST_PATH:-/data/coolify/shared/minio-tls/minio-ca-bundle.pem}:/etc/ssl/certs/minio-ca-bundle.pem:ro
     ports:
       - "3214:3214"
     networks:
