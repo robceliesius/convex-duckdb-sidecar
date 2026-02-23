@@ -40,13 +40,18 @@ npm run dev
 
 ## Example .env (for local dev scripts)
 
-The sidecar only reads `PORT` from environment variables. S3/MinIO config is passed per-request in `s3_config`.
+The sidecar reads runtime tuning from environment variables. S3/MinIO config is passed per-request in `s3_config`.
 
 That said, having a `.env` is convenient for curl scripts and local tooling:
 
 ```bash
 # .env
 PORT=3214
+DUCKDB_THREADS=12
+DUCKDB_MEMORY_LIMIT=6GB
+DUCKDB_ENABLE_OBJECT_CACHE=true
+SIDECAR_MAX_CONCURRENT_QUERIES=12
+SIDECAR_MAX_QUERY_QUEUE=200
 
 # Used by your shell scripts/curl examples (not read automatically by the sidecar).
 S3_ENDPOINT_URL=http://localhost:9000
@@ -162,8 +167,26 @@ echo
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
 | `PORT` | `3214` | HTTP server port |
+| `DUCKDB_THREADS` | unset | DuckDB worker thread count (`SET threads`) |
+| `DUCKDB_MEMORY_LIMIT` | `6GB` | DuckDB memory limit (`SET memory_limit`) |
+| `DUCKDB_ENABLE_OBJECT_CACHE` | `true` | DuckDB object cache (`SET enable_object_cache`) |
+| `SIDECAR_MAX_CONCURRENT_QUERIES` | `12` | Max concurrent `/query` executions |
+| `SIDECAR_MAX_QUERY_QUEUE` | `200` | Max queued `/query` requests before returning `503` |
 
 S3 credentials are passed per-request in the `s3_config` body field (not via environment variables), so a single sidecar instance can serve multiple tenants/buckets.
+
+### Coolify Production Example
+
+Set these in the DuckDB sidecar app environment:
+
+```bash
+PORT=3214
+DUCKDB_THREADS=12
+DUCKDB_MEMORY_LIMIT=6GB
+DUCKDB_ENABLE_OBJECT_CACHE=true
+SIDECAR_MAX_CONCURRENT_QUERIES=12
+SIDECAR_MAX_QUERY_QUEUE=200
+```
 
 ## Docker Compose Example
 
