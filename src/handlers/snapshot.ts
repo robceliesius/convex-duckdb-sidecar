@@ -85,6 +85,7 @@ export async function handleSnapshot(req: Request, res: Response) {
       async () => {
         let db: Database | null = null;
         let tmpPath: string | null = null;
+        let tmpDir: string | null = null;
         try {
           db = await Database.create(":memory:");
 
@@ -111,10 +112,8 @@ export async function handleSnapshot(req: Request, res: Response) {
               await stmt.finalize().catch(() => {});
             }
           }
-          tmpPath = path.join(
-            os.tmpdir(),
-            `duckdb_snap_${Date.now()}_${process.pid}_${randomUUID()}.parquet`,
-          );
+          tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "duckdb_snap_"));
+          tmpPath = path.join(tmpDir, `${Date.now()}_${process.pid}_${randomUUID()}.parquet`);
 
           const sortCol = columns.find((c) => c.target === "created_at")
             ? "created_at"
@@ -152,6 +151,7 @@ export async function handleSnapshot(req: Request, res: Response) {
         } finally {
           if (db) await db.close().catch(() => {});
           if (tmpPath) await fs.unlink(tmpPath).catch(() => {});
+          if (tmpDir) await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
         }
       },
     );

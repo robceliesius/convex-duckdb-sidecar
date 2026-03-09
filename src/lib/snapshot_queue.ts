@@ -21,7 +21,10 @@ function parsePositiveIntEnv(name: string, fallback: number): number {
   return parsed;
 }
 
-const MAX_CONCURRENT = parsePositiveIntEnv("SIDECAR_MAX_CONCURRENT_SNAPSHOTS", 4);
+// Snapshot exports are write-heavy and have shown temp-file rename races under
+// parallel load. Keep them serialized by default; query concurrency is handled
+// separately and remains unaffected.
+const MAX_CONCURRENT = parsePositiveIntEnv("SIDECAR_MAX_CONCURRENT_SNAPSHOTS", 1);
 const MAX_QUEUE = parsePositiveIntEnv("SIDECAR_MAX_SNAPSHOT_QUEUE", 100);
 
 let running = 0;
